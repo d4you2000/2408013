@@ -7,10 +7,8 @@ from langchain_teddynote.models import MultiModal
 from dotenv import load_dotenv
 import os
 
-
 # API KEY 정보로드
 #load_dotenv()
-
 
 # 캐시 디렉토리 생성
 if not os.path.exists(".cache"):
@@ -33,7 +31,6 @@ if "messages" not in st.session_state:
 # 탭을 생성
 main_tab1, main_tab2 = st.tabs(["이미지", "대화내용"])
 
-
 # 사이드바 생성
 with st.sidebar:
     # 초기화 버튼 생성
@@ -48,26 +45,22 @@ with st.sidebar:
     # 시스템 프롬프트 추가
     system_prompt = st.text_area(
         "시스템 프롬프트",
-        "당신은 사진을 분석해서 날씨와 장소를 분석하는 어시스턴트 입니다.\n당신의 임무는 주어진 사진을 바탕으로 필요한 캠핑장비를 정리하여 친절하게 추천하는 것입니다.",
+        "당신은 사진을 분석해서 날씨와 장소를 분석하는 어시스턴트입니다. 당신의 임무는 주어진 사진을 바탕으로 필요한 캠핑장비를 정리하여 친절하게 추천하는 것입니다.",
         height=200,
     )
-
 
 # 이전 대화를 출력
 def print_messages():
     for chat_message in st.session_state["messages"]:
         main_tab2.chat_message(chat_message.role).write(chat_message.content)
 
-
 # 새로운 메시지를 추가
 def add_message(role, message):
     st.session_state["messages"].append(ChatMessage(role=role, content=message))
 
-
-# 이미지을 캐시 저장(시간이 오래 걸리는 작업을 처리할 예정)
+# 이미지 캐시 저장
 @st.cache_resource(show_spinner="업로드한 이미지를 처리 중입니다...")
 def process_imagefile(file):
-    # 업로드한 파일을 캐시 디렉토리에 저장합니다.
     file_content = file.read()
     file_path = f"./.cache/files/{file.name}"
 
@@ -76,25 +69,19 @@ def process_imagefile(file):
 
     return file_path
 
-
 # 체인 생성
 def generate_answer(image_filepath, system_prompt, user_prompt, model_name="gpt-4o"):
-    # 객체 생성
     llm = ChatOpenAI(
         temperature=0,
         model_name=model_name,  # 모델명
-        openai_api_key = st.session_state.api_key
+        openai_api_key=st.session_state.api_key
     )
 
-    # 멀티모달 객체 생성
     multimodal = MultiModal(llm, system_prompt=system_prompt, user_prompt=user_prompt)
-
-    # 이미지 파일로 부터 질의(스트림 방식)
     answer = multimodal.stream(image_filepath)
     return answer
 
-
-# 초기화 버튼이 눌리면...
+# 초기화 버튼이 눌리면
 if clear_btn:
     st.session_state["messages"] = []
 
@@ -107,28 +94,22 @@ user_input = st.chat_input("궁금한 내용을 물어보세요!")
 # 경고 메시지를 띄우기 위한 빈 영역
 warning_msg = main_tab2.empty()
 
-# 이미지가 업로드가 된다면...
+# 이미지 업로드 처리
 if uploaded_file:
-    # 이미지 파일을 처리
     image_filepath = process_imagefile(uploaded_file)
     main_tab1.image(image_filepath)
 
-# 만약에 사용자 입력이 들어오면...
+# 사용자 입력 처리
 if user_input:
-    # 파일이 업로드 되었는지 확인
     if uploaded_file:
-        # 이미지 파일을 처리
         image_filepath = process_imagefile(uploaded_file)
-        # 답변 요청
         response = generate_answer(
             image_filepath, system_prompt, user_input, selected_model
         )
 
-        # 사용자의 입력
         main_tab2.chat_message("user").write(user_input)
 
         with main_tab2.chat_message("assistant"):
-            # 빈 공간(컨테이너)을 만들어서, 여기에 토큰을 스트리밍 출력한다.
             container = st.empty()
 
             ai_answer = ""
@@ -136,9 +117,14 @@ if user_input:
                 ai_answer += token.content
                 container.markdown(ai_answer)
 
-        # 대화기록을 저장한다.
+            # 캠핑 장비 목록 예시 (추가된 코드 부분)
+            camping_items = ["🛶 카약", "⛺ 텐트", "🔥 화로대", "🎒 배낭", "🔦 랜턴"]
+            st.markdown("### 추천 캠핑 장비:")
+            for item in camping_items:
+                st.checkbox(item, value=False)  # 체크박스 추가
+
+        # 대화기록을 저장
         add_message("user", user_input)
         add_message("assistant", ai_answer)
     else:
-        # 이미지를 업로드 하라는 경고 메시지 출력
         warning_msg.error("이미지를 업로드 해주세요.")
