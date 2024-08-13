@@ -1,120 +1,102 @@
 import streamlit as st
-import requests
-from PIL import Image
-from io import BytesIO
-
-from langchain_openai import ChatOpenAI
-from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages.chat import ChatMessage
-from langchain_core.output_parsers import StrOutputParser
+from langchain_openai import ChatOpenAI
+from langchain_teddynote import logging
+from langchain_teddynote.models import MultiModal
+
+from dotenv import load_dotenv
+import os
+
+
+# API KEY 정보로드
+#load_dotenv()
+
 
 # 캐시 디렉토리 생성
 if not os.path.exists(".cache"):
     os.mkdir(".cache")
 
+# 파일 업로드 전용 폴더
 if not os.path.exists(".cache/files"):
     os.mkdir(".cache/files")
 
 if not os.path.exists(".cache/embeddings"):
     os.mkdir(".cache/embeddings")
 
-st.title("캠핑 장비 추천 챗봇 🏕️")
+st.title("이미지 인식 기반 챗봇 💬")
 
-# 세션 상태 초기화
+# 처음 1번만 실행하기 위한 코드
 if "messages" not in st.session_state:
+    # 대화기록을 저장하기 위한 용도로 생성한다.
     st.session_state["messages"] = []
 
-if "store" not in st.session_state:
-    st.session_state["store"] = {}
+# 탭을 생성
+main_tab1, main_tab2 = st.tabs(["이미지", "대화내용"])
 
-if "image_analysis" not in st.session_state:
-    st.session_state["image_analysis"] = ""
 
 # 사이드바 생성
 with st.sidebar:
     # 초기화 버튼 생성
     clear_btn = st.button("대화 초기화")
 
+    # 이미지 업로드
+    uploaded_file = st.file_uploader("이미지 업로드", type=["jpg", "jpeg", "png"])
+
     # 모델 선택 메뉴
     selected_model = st.selectbox("LLM 선택", ["gpt-4o", "gpt-4o-mini"], index=0)
 
-    # 세션 ID 를 지정하는 메뉴
-    session_id = st.text_input("세션 ID를 입력하세요.", "abc123")
+    # 시스템 프롬프트 추가
+    system_prompt = st.text_area(
+        "시스템 프롬프트",
+        "당신은 사진을 분석해서 날씨와 장소를 분석하는 어시스턴트 입니다.\n당신의 임무는 주어진 사진을 바탕으로 필요한 캠핑장비를 정리하여 친절하게 추천하는 것입니다.",
+        height=200,
+    )
 
-
-# 이미지 분석 함수 (이 예제에서는 OpenAI의 이미지 모델을 사용한다고 가정)
-def analyze_image(image):
-    # 이 부분은 실제 이미지 분석을 위한 API 호출이나 모델 실행으로 대체해야 합니다.
-    # 여기서는 예시로 단순히 예측 결과를 반환합니다.
-    return "산악 지형, 맑은 날씨"
-
-# 장비 추천 함수
-def recommend_equipment(description):
-    # 장비 추천을 위한 간단한 로직 예제
-    if "산악" in description and "맑은" in description:
-        return "추천 장비: 등산용 텐트, 트레킹 폴, 다용도 나이프"
-    else:
-        return "추천 장비: 일반 캠핑 장비"
 
 # 이전 대화를 출력
 def print_messages():
     for chat_message in st.session_state["messages"]:
-        st.chat_message(chat_message.role).write(chat_message.content)
+        main_tab2.chat_message(chat_message.role).write(chat_message.content)
+
 
 # 새로운 메시지를 추가
 def add_message(role, message):
     st.session_state["messages"].append(ChatMessage(role=role, content=message))
 
 
-# 세션 ID를 기반으로 세션 기록을 가져오는 함수
-def get_session_history(session_ids):
-    if session_ids not in st.session_state["store"]:
-        st.session_state["store"][session_ids] = ChatMessageHistory()
-    return st.session_state["store"][session_ids]
+# 이미지을 캐시 저장(시간이 오래 걸리는 작업을 처리할 예정)
+@st.cache_resource(show_spinner="업로드한 이미지를 처리 중입니다...")
+def process_imagefile(file):
+    # 업로드한 파일을 캐시 디렉토리에 저장합니다.
+    file_content = file.read()
+    file_path = f"./.cache/files/{file.name}"
+
+    with open(file_path, "wb") as f:
+        f.write(file_content)
+
+    return file_path
 
 
 # 체인 생성
-def create_chain(model_name="gpt-4o"):
-    prompt = ChatPromptTemplate.from_messages(
-        [
-            ("system", "당신은 캠핑 장비 추천 챗봇입니다."),
-            MessagesPlaceholder(variable_name="chat_history"),
-            ("human", "#Location and Weather Description:\n{description}"),
-        ]
+def generate_answer(image_filepath, system_prompt, user_prompt, model_name="gpt-4o"):
+    # 객체 생성
+    llm = ChatOpenAI(
+        temperature=0,
+        model_name=model_name,  # 모델명
+        openai_api_key = st.session_state.api_key
     )
 
-    llm = ChatOpenAI(model_name=model_name, openai_api_key=st.session_state.get('api_key', ''))
-    chain = prompt | llm | StrOutputParser()
+    # 멀티모달 객체 생성
+    multimodal = MultiModal(llm, system_prompt=system_prompt, user_prompt=user_prompt)
 
-    chain_with_history = RunnableWithMessageHistory(
-        chain,
-        get_session_history,
-        input_messages_key="description",
-        history_messages_key="chat_history",
-    )
-    return chain_with_history
+    # 이미지 파일로 부터 질의(스트림 방식)
+    answer = multimodal.stream(image_filepath)
+    return answer
 
 
 # 초기화 버튼이 눌리면...
 if clear_btn:
     st.session_state["messages"] = []
-    st.session_state["image_analysis"] = ""
-
-# 이미지 업로드
-uploaded_file = st.file_uploader("이미지를 업로드하세요.", type=["jpg", "jpeg", "png"])
-
-if uploaded_file is not None:
-    image = Image.open(uploaded_file)
-    st.image(image, caption="업로드된 이미지", use_column_width=True)
-
-    # 이미지 분석
-    analysis_result = analyze_image(image)
-    st.session_state["image_analysis"] = analysis_result
-    st.write(f"분석된 장소 및 날씨: {analysis_result}")
-
-    # 장비 추천
-    recommendation = recommend_equipment(analysis_result)
-    st.write(f"추천 장비: {recommendation}")
 
 # 이전 대화 기록 출력
 print_messages()
@@ -122,27 +104,41 @@ print_messages()
 # 사용자의 입력
 user_input = st.chat_input("궁금한 내용을 물어보세요!")
 
-if "multiturn_chain" not in st.session_state:
-    st.session_state["multiturn_chain"] = create_chain(model_name=selected_model)
+# 경고 메시지를 띄우기 위한 빈 영역
+warning_msg = main_tab2.empty()
 
+# 이미지가 업로드가 된다면...
+if uploaded_file:
+    # 이미지 파일을 처리
+    image_filepath = process_imagefile(uploaded_file)
+    main_tab1.image(image_filepath)
+
+# 만약에 사용자 입력이 들어오면...
 if user_input:
-    chain = st.session_state["multiturn_chain"]
-    if chain is not None:
-        response = chain.stream(
-            {"description": st.session_state["image_analysis"]},
-            config={"configurable": {"session_id": session_id}},
+    # 파일이 업로드 되었는지 확인
+    if uploaded_file:
+        # 이미지 파일을 처리
+        image_filepath = process_imagefile(uploaded_file)
+        # 답변 요청
+        response = generate_answer(
+            image_filepath, system_prompt, user_input, selected_model
         )
 
-        st.chat_message("user").write(user_input)
+        # 사용자의 입력
+        main_tab2.chat_message("user").write(user_input)
 
-        with st.chat_message("assistant"):
+        with main_tab2.chat_message("assistant"):
+            # 빈 공간(컨테이너)을 만들어서, 여기에 토큰을 스트리밍 출력한다.
             container = st.empty()
+
             ai_answer = ""
             for token in response:
-                ai_answer += token
+                ai_answer += token.content
                 container.markdown(ai_answer)
 
-            add_message("user", user_input)
-            add_message("assistant", ai_answer)
+        # 대화기록을 저장한다.
+        add_message("user", user_input)
+        add_message("assistant", ai_answer)
     else:
-        st.error("체인을 초기화해 주세요.")
+        # 이미지를 업로드 하라는 경고 메시지 출력
+        warning_msg.error("이미지를 업로드 해주세요.")
